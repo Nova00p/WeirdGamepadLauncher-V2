@@ -1,4 +1,4 @@
-name: Build APK
+        name: Build APK
 
 on:
   workflow_dispatch:
@@ -15,58 +15,73 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Setup Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.6.1'
+          gradle-version: "9.6.1"
 
-      - name: Find and extract project ZIP
+      - name: Find Gradle root
+        shell: bash
         run: |
-          rm -rf project
-          mkdir -p project
+          set -e
 
-          ZIP=$(find . -type f -name "*.zip" | head -n 1)
-
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: No project ZIP found"
-            exit 1
-          fi
-
-          echo "Using project ZIP:"
-          echo "$ZIP"
-
-          unzip -q "$ZIP" -d project
-
-          echo "=== Extracted files ==="
-          find project -maxdepth 4 -type f | sort
-
-      - name: Find Gradle project
-        run: |
-          SETTINGS=$(find project \
-            \( -name settings.gradle -o -name settings.gradle.kts \) \
-            -type f | head -n 1)
+          SETTINGS=$(find . -type f \( \
+            -name "settings.gradle" -o \
+            -name "settings.gradle.kts" \
+          \) -print | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle not found"
+            echo "ERROR: No settings.gradle or settings.gradle.kts found."
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Gradle project found at:"
-          echo "$PROJECT_DIR"
-
+          echo "Gradle project found at: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Build APK
+      - name: Build debug APK
+        shell: bash
         run: |
-          gradle :app:assembleDebug --no-daemon
+          set -e
+          gradle :app:assembleDebug --no-daemon --stacktrace
         working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Find generated APK
+        shell: bash
+        run: |
+          set -e
+
+          echo "Searching for generated APK files..."
+
+          find "${PROJECT_DIR}" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          APK_PATH=$(find "${PROJECT_DIR}" \
+            -type f \
+            -path "*/build/outputs/apk/*/*.apk" \
+            | head -n 1)
+
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: Build completed, but no APK was found."
+            echo "Listing build output folders:"
+            find "${PROJECT_DIR}" \
+              -type d \
+              -path "*/build/outputs/*" \
+              -print || true
+            exit 1
+          fi
+
+          echo "APK found at: $APK_PATH"
+          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: WeirdGamepadLauncher-APK
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          name: WeirdGamepadLauncher-V2-Phase1-APK
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
