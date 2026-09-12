@@ -1,0 +1,118 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Extract project ZIP if necessary
+        shell: bash
+        run: |
+          set -e
+
+          if find . -type f \( \
+            -name "settings.gradle" -o \
+            -name "settings.gradle.kts" \
+          \) -print -quit | grep -q .; then
+            echo "Gradle project is already extracted."
+          else
+            ZIP_FILE=$(find . -type f -iname "*.zip" -print -quit || true)
+
+            if [ -z "$ZIP_FILE" ]; then
+              echo "ERROR: No Gradle project and no ZIP file were found."
+              echo "Repository contents:"
+              find . -maxdepth 3 -print
+              exit 1
+            fi
+
+            echo "Extracting: $ZIP_FILE"
+
+            mkdir -p extracted-project
+            unzip -q "$ZIP_FILE" -d extracted-project
+
+            echo "Extraction complete."
+          fi
+
+      - name: Find Gradle project root
+        shell: bash
+        run: |
+          set -e
+
+          SETTINGS_FILE=$(find . -type f \( \
+            -name "settings.gradle" -o \
+            -name "settings.gradle.kts" \
+          \) -print -quit)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: settings.gradle was not found after extraction."
+            echo "Repository contents:"
+            find . -maxdepth 5 -print
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "Gradle project root: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew :app:assembleDebug --no-daemon --stacktrace
+          else
+            gradle :app:assembleDebug --no-daemon --stacktrace
+          fi
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Find generated APK
+        shell: bash
+        run: |
+          set -e
+
+          echo "Searching for APK files..."
+
+          find "${PROJECT_DIR}" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          APK_FILE=$(find "${PROJECT_DIR}" \
+            -type f \
+            -path "*/build/outputs/apk/*/*.apk" \
+            -print -quit)
+
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: Build completed, but no APK was found."
+            exit 1
+          fi
+
+          echo "APK found: $APK_FILE"
+          echo "APK_FILE=$APK_FILE" >> "$GITHUB_ENV"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeirdGamepadLauncher-V2-Phase1-APK
+          path: ${{ env.APK_FILE }}
+          if-no-files-found: error
