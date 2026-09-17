@@ -17,23 +17,88 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-36
-            build-tools;36.0.0
-
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          yes | sdkmanager --licenses > /dev/null || true
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.6.1"
+
+      - name: Locate Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          if [ -n "${ANDROID_SDK_ROOT:-}" ]; then
+            SDK_ROOT="$ANDROID_SDK_ROOT"
+          elif [ -n "${ANDROID_HOME:-}" ]; then
+            SDK_ROOT="$ANDROID_HOME"
+          else
+            echo "ERROR: Android SDK location not found."
+            exit 1
+          fi
+
+          echo "Android SDK: $SDK_ROOT"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Find sdkmanager
+        shell: bash
+        run: |
+          set -e
+
+          SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" \
+            -type f \
+            -name "sdkmanager" \
+            -print -quit 2>/dev/null || true)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found."
+            find "$ANDROID_SDK_ROOT" \
+              -maxdepth 6 \
+              -type f \
+              -name "sdkmanager" \
+              -print
+            exit 1
+          fi
+
+          echo "sdkmanager found at:"
+          echo "$SDKMANAGER"
+
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+
+      - name: Accept required Android SDK licenses
+        shell: bash
+        run: |
+          set -e
+
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            --licenses > sdk-licenses.log 2>&1 || true
+
+          echo "Android SDK license step completed."
+
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          set -e
+
+          "$SDKMANAGER" \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking Android 36..."
+          test -d "$ANDROID_SDK_ROOT/platforms/android-36"
+
+          echo "Checking Build Tools 36.0.0..."
+          test -d "$ANDROID_SDK_ROOT/build-tools/36.0.0"
+
+          echo "Android SDK verification successful."
 
       - name: Extract project ZIP if necessary
         shell: bash
@@ -44,12 +109,16 @@ jobs:
             -name "settings.gradle" -o \
             -name "settings.gradle.kts" \
           \) -print -quit | grep -q .; then
+
             echo "Gradle project is already extracted."
+
           else
+
             ZIP_FILE=$(find . -type f -iname "*.zip" -print -quit || true)
 
             if [ -z "$ZIP_FILE" ]; then
               echo "ERROR: No Gradle project and no ZIP file were found."
+              echo "Repository contents:"
               find . -maxdepth 3 -print
               exit 1
             fi
@@ -73,7 +142,8 @@ jobs:
           \) -print -quit)
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: settings.gradle was not found."
+            echo "ERROR: settings.gradle was not found after extraction."
+            echo "Repository contents:"
             find . -maxdepth 5 -print
             exit 1
           fi
@@ -83,20 +153,6 @@ jobs:
           echo "Gradle project root: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Verify Android SDK
-        shell: bash
-        run: |
-          set -e
-
-          echo "Android SDK:"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-          echo
-          echo "Required packages:"
-          sdkmanager --list_installed | grep -E \
-            "platform-tools|platforms;android-36|build-tools;36.0.0" || true
-
       - name: Build debug APK
         shell: bash
         run: |
@@ -104,9 +160,13 @@ jobs:
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew :app:assembleDebug --no-daemon --stacktrace
+            ./gradlew :app:assembleDebug \
+              --no-daemon \
+              --stacktrace
           else
-            gradle :app:assembleDebug --no-daemon --stacktrace
+            gradle :app:assembleDebug \
+              --no-daemon \
+              --stacktrace
           fi
         working-directory: ${{ env.PROJECT_DIR }}
 
